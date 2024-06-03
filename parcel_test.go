@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
@@ -43,6 +44,18 @@ func setupDB(t *testing.T) *sql.DB {
 	return db
 }
 
+// normalizeTime converts the time string to UTC format for comparison
+func normalizeTime(t *testing.T, timeStr string) string {
+	parsedTime, err := time.Parse(time.RFC3339, timeStr)
+	require.NoError(t, err)
+	return parsedTime.UTC().Format(time.RFC3339)
+}
+
+func normalizeParcel(t *testing.T, parcel Parcel) Parcel {
+	parcel.CreatedAt = normalizeTime(t, parcel.CreatedAt)
+	return parcel
+}
+
 // TestAddGetDelete проверяет добавление, получение и удаление посылки
 func TestAddGetDelete(t *testing.T) {
 	// prepare
@@ -55,13 +68,14 @@ func TestAddGetDelete(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, id)
 
+	parcel.Number = id
+	parcel = normalizeParcel(t, parcel)
+
 	// get
 	storedParcel, err := store.Get(id)
 	require.NoError(t, err)
-	require.Equal(t, parcel.Client, storedParcel.Client)
-	require.Equal(t, parcel.Status, storedParcel.Status)
-	require.Equal(t, parcel.Address, storedParcel.Address)
-	require.NotZero(t, storedParcel.CreatedAt)
+	storedParcel = normalizeParcel(t, storedParcel)
+	assert.Equal(t, parcel, storedParcel)
 
 	// delete
 	err = store.Delete(id)
@@ -70,6 +84,7 @@ func TestAddGetDelete(t *testing.T) {
 	// check delete
 	_, err = store.Get(id)
 	require.Error(t, err)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 // TestSetAddress проверяет обновление адреса
@@ -84,15 +99,22 @@ func TestSetAddress(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, id)
 
+	parcel.Number = id
+
 	// set address
 	newAddress := "new test address"
 	err = store.SetAddress(id, newAddress)
 	require.NoError(t, err)
 
+	// update the address in the original parcel for comparison
+	parcel.Address = newAddress
+	parcel = normalizeParcel(t, parcel)
+
 	// check
 	storedParcel, err := store.Get(id)
 	require.NoError(t, err)
-	require.Equal(t, newAddress, storedParcel.Address)
+	storedParcel = normalizeParcel(t, storedParcel)
+	assert.Equal(t, parcel, storedParcel)
 }
 
 // TestSetStatus проверяет обновление статуса
@@ -107,15 +129,22 @@ func TestSetStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, id)
 
+	parcel.Number = id
+
 	// set status
 	newStatus := ParcelStatusSent
 	err = store.SetStatus(id, newStatus)
 	require.NoError(t, err)
 
+	// update the status in the original parcel for comparison
+	parcel.Status = newStatus
+	parcel = normalizeParcel(t, parcel)
+
 	// check
 	storedParcel, err := store.Get(id)
 	require.NoError(t, err)
-	require.Equal(t, newStatus, storedParcel.Status)
+	storedParcel = normalizeParcel(t, storedParcel)
+	assert.Equal(t, parcel, storedParcel)
 }
 
 // TestGetByClient проверяет получение посылок по идентификатору клиента
@@ -143,6 +172,7 @@ func TestGetByClient(t *testing.T) {
 		require.NoError(t, err)
 		require.NotZero(t, id)
 		parcels[i].Number = id
+		parcels[i] = normalizeParcel(t, parcels[i])
 		parcelMap[id] = parcels[i]
 	}
 
@@ -151,22 +181,14 @@ func TestGetByClient(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, storedParcels, len(parcels))
 
+	for i := range storedParcels {
+		storedParcels[i] = normalizeParcel(t, storedParcels[i])
+	}
+
 	// check
 	for _, parcel := range storedParcels {
 		expectedParcel, exists := parcelMap[parcel.Number]
 		require.True(t, exists)
-		require.Equal(t, expectedParcel.Client, parcel.Client)
-		require.Equal(t, expectedParcel.Status, parcel.Status)
-		require.Equal(t, expectedParcel.Address, parcel.Address)
-		require.Equal(t, normalizeTime(expectedParcel.CreatedAt), normalizeTime(parcel.CreatedAt))
+		assert.Equal(t, expectedParcel, parcel)
 	}
-}
-
-// normalizeTime converts the time string to UTC format for comparison
-func normalizeTime(timeStr string) string {
-	parsedTime, err := time.Parse(time.RFC3339, timeStr)
-	if err != nil {
-		return timeStr
-	}
-	return parsedTime.UTC().Format(time.RFC3339)
 }
